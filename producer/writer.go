@@ -47,7 +47,7 @@ func main() {
 			log.Info("Interrupted, assuming shutdown.");
 			os.Exit(0)
 		default:
-	    sendRecord(gen.Get(), client, options.streamName);
+	    sendRecord(gen.Get(), client, options.streamName, strconv.FormatInt(time.Now().UnixNano(), 10));
 	    time.Sleep(100 * time.Millisecond)
 		}
 	}
@@ -101,16 +101,20 @@ func validateStream(client *kinesis.Kinesis, streamName string) {
  * @param kinesisClient Amazon Kinesis client
  * @param streamName Name of stream
  */
-func sendRecord(blob []byte, client *kinesis.Kinesis, streamName string) {
+func sendRecord(blob []byte, client *kinesis.Kinesis, streamName string, seq string) {
 	log.Debug("Putting blob: len(%d)", len(blob))
-	req, _ := client.PutRecordRequest(&kinesis.PutRecordInput{
+	req, resp := client.PutRecordRequest(&kinesis.PutRecordInput{
 		PartitionKey: aws.String(strconv.Itoa(len(blob))),  // We use the size of blob as the partition key.
 		StreamName: aws.String(streamName),
 		Data: blob,
+		SequenceNumberForOrdering: aws.String(seq),
 	})
+	start := time.Now()
 	err := req.Send()
+	dt := time.Since(start)
 	if err != nil {
 		log.Error("Exception while sending data to Kinesis. Will try again next cycle. %v", err);
-		os.Exit(1)
+	} else {
+		log.Debug("Sent %d blob: %s,%s,%v,%d", len(blob), *resp.ShardId, *resp.SequenceNumber, dt, dt)
 	}
 }

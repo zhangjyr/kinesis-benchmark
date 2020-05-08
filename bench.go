@@ -21,6 +21,7 @@ var (
 type Options struct {
 	streamName    string
 	regionName    string
+	startFrom     string
 }
 
 func main() {
@@ -37,14 +38,24 @@ func main() {
 	// Validate that the stream exists and is active
 	stream := validateStream(client, options.streamName);
 
+	// Get iterator
+	iterator := getIterator(stream.Shards[0], client, options.streamName, options.startFrom)
+	if iterator == nil {
+		os.Exit(1)
+	}
+
 	// Repeatedly send stock trades with a 100 milliseconds wait in between
+	// var ret []byte
 	for {
 		select {
 		case <-sig:
 			log.Info("Interrupted, assuming shutdown.");
 			os.Exit(0)
 		default:
-	    getRecord(stream.Shards[0], client, options.streamName);
+	    _, iterator = getRecord(stream.Shards[0], client, options.streamName, iterator);
+			if iterator == nil {
+				os.Exit(1)
+			}
 	    time.Sleep(100 * time.Millisecond)
 		}
 	}
@@ -55,6 +66,7 @@ func checkUsage(options *Options) {
 	flag.BoolVar(&printInfo, "h", false, "help info?")
 
 	flag.StringVar(&options.regionName, "region", "us-east-1", "AWS region")
+	flag.StringVar(&options.startFrom, "since", "", "Since sequence number")
 
 	flag.Parse()
 
@@ -88,32 +100,54 @@ func validateStream(client *kinesis.Kinesis, streamName string) *kinesis.StreamD
 	if *resp.StreamDescription.StreamStatus != "ACTIVE" {
 		log.Error("Stream %s is not active. Please wait a few moments and try again.", streamName)
 		os.Exit(1)
+	} else {
+		log.Info("Shards: %v", resp.StreamDescription.Shards)
 	}
 
 	return resp.StreamDescription
 }
 
-func getRecord(shard *kinesis.Shard, client *kinesis.Kinesis, streamName string) []byte {
-	start := time.Now()
-	iterator, err := client.GetShardIterator(&kinesis.GetShardIteratorInput{
+func getIterator(shard *kinesis.Shard, client *kinesis.Kinesis, streamName string, startSeq string) *string {
+	input := &kinesis.GetShardIteratorInput{
 		ShardId: shard.ShardId,  // We use the size of blob as the partition key.
 		ShardIteratorType: aws.String(kinesis.ShardIteratorTypeLatest),
 		StreamName: aws.String(streamName),
-	})
+	}
+	if startSeq != "" {
+		input.ShardIteratorType = aws.String(kinesis.ShardIteratorTypeAtSequenceNumber)
+		input.StartingSequenceNumber = aws.String(startSeq)
+	}
+	req, resp := client.GetShardIteratorRequest(input)
+
+	start := time.Now()
+	err := req.Send()
+	dt := time.Since(start)
 	if err != nil {
 		log.Error("Failed to get latest iterator. %v", err);
-		os.Exit(1)
-	}
-
-	records, err := client.GetRecords(&kinesis.GetRecordsInput{
-		Limit: aws.Int64(1),
-		ShardIterator: iterator.ShardIterator,
-	})
-	if err != nil {
-		log.Error("Failed to get latest records. %v", err);
 		return nil
+	} else {
+		log.Debug("Got iterator %s,%v,%d", *resp.ShardIterator, dt, dt)
+		return resp.ShardIterator
 	}
+}
+
+func getRecord(shard *kinesis.Shard, client *kinesis.Kinesis, streamName string, iterator *string) ([]byte, *string) {
+	req, resp := client.GetRecordsRequest(&kinesis.GetRecordsInput{
+		Limit: aws.Int64(1),
+		ShardIterator: iterator,
+	})
+
+	start := time.Now()
+	err := req.Send()
 	dt := time.Since(start)
-	log.Debug("Get %s: %v(%d)", *records.Records[0].SequenceNumber, dt, dt)
-	return records.Records[0].Data
+	if err != nil {
+		log.Error("Failed to get record: %v", err);
+		return nil, nil
+	} else if len(resp.Records) > 0 {
+		log.Debug("Got %s,%v,%d)", *resp.Records[0].SequenceNumber, dt, dt)
+		return resp.Records[0].Data, resp.NextShardIterator
+	} else {
+		log.Info("Reached the end of the stream.")
+		return nil, resp.NextShardIterator
+	}
 }
