@@ -5,8 +5,8 @@ import (
 	"time"
 )
 
-const (
-	BLOB_SIZE = 64 * 1000  // 64K
+var (
+	BlobSize = 64 * 1000  // 64K
 )
 
 func init() {
@@ -17,7 +17,7 @@ type BlobGenerator struct {
 }
 
 func (g *BlobGenerator) Get() []byte {
-	val := make([]byte, BLOB_SIZE)
+	val := make([]byte, BlobSize)
 	rand.Read(val)
 	return val
 }

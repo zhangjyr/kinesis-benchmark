@@ -23,6 +23,7 @@ var (
 type Options struct {
 	streamName    string
 	regionName    string
+	size          int
 }
 
 func main() {
@@ -40,6 +41,7 @@ func main() {
 	validateStream(client, options.streamName);
 
 	// Repeatedly send stock trades with a 100 milliseconds wait in between
+	generator.BlobSize = options.size
 	gen := &generator.BlobGenerator{}
 	for {
 		select {
@@ -58,6 +60,7 @@ func checkUsage(options *Options) {
 	flag.BoolVar(&printInfo, "h", false, "help info?")
 
 	flag.StringVar(&options.regionName, "region", "us-east-1", "AWS region")
+	flag.IntVar(&options.size, "size", 64 * 1000, "Size of the object.")
 
 	flag.Parse()
 
